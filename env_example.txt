@@ -1,0 +1,10 @@
+# GitHub API Configuration
+# Get your token from: https://github.com/settings/tokens
+# Required permissions: repo, public_repo
+GITHUB_TOKEN=your_github_token_here
+
+# Database Configuration (optional)
+# DATABASE_PATH=grants_database.db
+
+# Logging Configuration (optional)
+# LOG_LEVEL=INFO 
