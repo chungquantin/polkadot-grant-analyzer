@@ -12,7 +12,43 @@ from github_client import GitHubClient
 from data_processor import GrantDataProcessor
 from database import GrantDatabase
 from ai_evaluator import AIEvaluator
-from config import GRANT_REPOSITORIES, STREAMLIT_CONFIG
+
+# Try to import config, with fallbacks
+try:
+    from config import GRANT_REPOSITORIES, STREAMLIT_CONFIG
+except ImportError:
+    # Fallback values if config module is not available
+    GRANT_REPOSITORIES = {
+        "w3f_grants": {
+            "owner": "w3f",
+            "repo": "Grants-Program",
+            "type": "pull_request",
+            "description": "Web3 Foundation Grants Program"
+        },
+        "polkadot_fast_grants": {
+            "owner": "Polkadot-Fast-Grants",
+            "repo": "apply",
+            "type": "pull_request",
+            "description": "Polkadot Fast Grants"
+        },
+        "use_inkubator": {
+            "owner": "use-inkubator",
+            "repo": "Ecosystem-Grants",
+            "type": "pull_request",
+            "description": "Use Inkubator Ecosystem Grants"
+        },
+        "polkadot_open_source": {
+            "owner": "PolkadotOpenSourceGrants",
+            "repo": "apply",
+            "type": "pull_request",
+            "description": "Polkadot Open Source Grants"
+        }
+    }
+    STREAMLIT_CONFIG = {
+        "page_title": "Polkadot Grant Analyzer",
+        "page_icon": "📊",
+        "layout": "wide"
+    }
 
 # Configure Streamlit page
 st.set_page_config(

@@ -3,7 +3,41 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
-from config import GITHUB_TOKEN, GITHUB_API_BASE_URL, GRANT_REPOSITORIES
+import os
+
+# Try to import config, with fallbacks
+try:
+    from config import GITHUB_TOKEN, GITHUB_API_BASE_URL, GRANT_REPOSITORIES
+except ImportError:
+    # Fallback values if config module is not available
+    GITHUB_TOKEN = os.getenv('GITHUB_TOKEN', '')
+    GITHUB_API_BASE_URL = "https://api.github.com"
+    GRANT_REPOSITORIES = {
+        "w3f_grants": {
+            "owner": "w3f",
+            "repo": "Grants-Program",
+            "type": "pull_request",
+            "description": "Web3 Foundation Grants Program"
+        },
+        "polkadot_fast_grants": {
+            "owner": "Polkadot-Fast-Grants",
+            "repo": "apply",
+            "type": "pull_request",
+            "description": "Polkadot Fast Grants"
+        },
+        "use_inkubator": {
+            "owner": "use-inkubator",
+            "repo": "Ecosystem-Grants",
+            "type": "pull_request",
+            "description": "Use Inkubator Ecosystem Grants"
+        },
+        "polkadot_open_source": {
+            "owner": "PolkadotOpenSourceGrants",
+            "repo": "apply",
+            "type": "pull_request",
+            "description": "Polkadot Open Source Grants"
+        }
+    }
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

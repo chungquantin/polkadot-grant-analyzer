@@ -1,72 +1,93 @@
 import pandas as pd
-import re
+import numpy as np
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
-import logging
-from config import CATEGORIES
+import json
+import os
 
-logger = logging.getLogger(__name__)
+# Try to import config, with fallbacks
+try:
+    from config import CATEGORIES
+except ImportError:
+    # Fallback values if config module is not available
+    CATEGORIES = {
+        "ADMIN-REVIEW": "Under administrative review",
+        "PENDING": "Pending approval",
+        "REJECTED": "Rejected proposals",
+        "APPROVED": "Approved proposals",
+        "STALE": "Stale proposals (over 60 days old)",
+        "CLOSED": "Closed without merging"
+    }
 
 class GrantDataProcessor:
     def __init__(self):
         self.categories = CATEGORIES
     
-    def parse_date(self, date_str: str) -> Optional[datetime]:
-        """Parse date string to datetime object"""
-        if not date_str:
-            return None
+    def process_proposals(self, proposals_data: dict) -> pd.DataFrame:
+        """Process raw proposals data into a structured DataFrame"""
+        processed_data = []
+        
+        for repo_key, proposals in proposals_data.items():
+            for proposal in proposals:
+                processed_proposal = self._process_single_proposal(proposal, repo_key)
+                if processed_proposal:
+                    processed_data.append(processed_proposal)
+        
+        df = pd.DataFrame(processed_data)
+        
+        if not df.empty:
+            # Convert date columns
+            date_columns = ['created_at', 'updated_at', 'closed_at', 'merged_at']
+            for col in date_columns:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+            
+            # Calculate additional metrics
+            df = self._calculate_metrics(df)
+        
+        return df
+    
+    def _process_single_proposal(self, proposal: dict, repo_key: str) -> dict:
+        """Process a single proposal"""
         try:
-            # Handle ISO format with timezone
-            if 'Z' in date_str:
-                return datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-            else:
-                return datetime.fromisoformat(date_str)
-        except:
-            try:
-                # Handle format without timezone
-                dt = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%SZ')
-                # Make it timezone-aware
-                return dt.replace(tzinfo=datetime.timezone.utc)
-            except:
-                try:
-                    # Handle other formats
-                    dt = datetime.strptime(date_str, '%Y-%m-%dT%H:%M:%S')
-                    return dt.replace(tzinfo=datetime.timezone.utc)
-                except:
-                    return None
+            # Basic proposal info
+            processed = {
+                'id': proposal.get('id'),
+                'number': proposal.get('number'),
+                'title': proposal.get('title', ''),
+                'body': proposal.get('body', ''),
+                'state': proposal.get('state', ''),
+                'created_at': proposal.get('created_at'),
+                'updated_at': proposal.get('updated_at'),
+                'closed_at': proposal.get('closed_at'),
+                'merged_at': proposal.get('merged_at'),
+                'repository': repo_key,
+                'author': proposal.get('user', {}).get('login', 'Unknown'),
+                'author_id': proposal.get('user', {}).get('id'),
+                'labels': self._extract_labels(proposal),
+                'milestone': proposal.get('milestone', {}).get('title', ''),
+                'comments_count': proposal.get('comments', 0),
+                'review_comments_count': proposal.get('review_comments', 0),
+                'commits_count': proposal.get('commits', 0),
+                'additions_count': proposal.get('additions', 0),
+                'deletions_count': proposal.get('deletions', 0),
+                'changed_files_count': proposal.get('changed_files', 0),
+                'curators': self._extract_curators(proposal),
+                'comments': proposal.get('comments', []),
+                'reviews': proposal.get('reviews', [])
+            }
+            
+            return processed
+        except Exception as e:
+            print(f"Error processing proposal {proposal.get('id', 'unknown')}: {e}")
+            return None
     
-    def extract_milestones(self, body: str) -> int:
-        """Extract number of milestones from proposal body"""
-        if not body:
-            return 0
-        
-        # Common milestone patterns
-        milestone_patterns = [
-            r'milestone[s]?\s*[:\-]\s*(\d+)',
-            r'phase[s]?\s*[:\-]\s*(\d+)',
-            r'stage[s]?\s*[:\-]\s*(\d+)',
-            r'(\d+)\s*milestone[s]?',
-            r'(\d+)\s*phase[s]?',
-            r'(\d+)\s*stage[s]?'
-        ]
-        
-        for pattern in milestone_patterns:
-            matches = re.findall(pattern, body.lower())
-            if matches:
-                try:
-                    return max(int(match) for match in matches)
-                except ValueError:
-                    continue
-        
-        # Count milestone mentions
-        milestone_mentions = len(re.findall(r'milestone', body.lower()))
-        if milestone_mentions > 0:
-            return milestone_mentions
-        
-        return 0
+    def _extract_labels(self, proposal: dict) -> list:
+        """Extract labels from proposal"""
+        labels = proposal.get('labels', [])
+        return [label.get('name', '') for label in labels if label.get('name')]
     
-    def extract_curators(self, proposal: Dict) -> List[str]:
-        """Extract curators from proposal comments and reviews"""
+    def _extract_curators(self, proposal: dict) -> list:
+        """Extract curators from comments and reviews"""
         curators = set()
         
         # Extract from comments
@@ -74,247 +95,179 @@ class GrantDataProcessor:
         for comment in comments:
             user = comment.get('user', {})
             if user and user.get('login'):
-                curators.add(user['login'])
+                curators.add(user.get('login'))
         
         # Extract from reviews
         reviews = proposal.get('reviews', [])
         for review in reviews:
             user = review.get('user', {})
             if user and user.get('login'):
-                curators.add(user['login'])
+                curators.add(user.get('login'))
         
         return list(curators)
     
-    def determine_category(self, proposal: Dict) -> str:
-        """Determine the category of a grant proposal"""
-        state = proposal.get('state', '').upper()
-        merged = proposal.get('merged', False)
-        merged_at = proposal.get('merged_at')
-        closed_at = proposal.get('closed_at')
-        created_at = self.parse_date(proposal.get('created_at'))
+    def _calculate_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate additional metrics for the DataFrame"""
+        if df.empty:
+            return df
         
-        # Check if proposal is stale (over 60 days old and still open)
-        if state == "OPEN" and created_at:
-            days_since_creation = (datetime.now() - created_at).days
-            if days_since_creation > 60:
-                return "STALE"
+        # Calculate approval time
+        df['approval_time_days'] = self._calculate_approval_time(df)
         
-        # Check if proposal was merged (either merged=True or has merged_at date)
-        if merged or (merged_at is not None and pd.notna(merged_at)):
-            return "APPROVED"
-        elif state == "CLOSED":
-            return "REJECTED"
-        elif state == "OPEN":
-            # Check labels for more specific categories
-            labels = proposal.get('labels', [])
-            for label in labels:
-                label_name = label.get('name', '').upper()
-                if label_name in self.categories:
-                    return label_name
-            return "PENDING"
+        # Determine category
+        df['category'] = df.apply(self._categorize_proposal, axis=1)
+        
+        # Calculate performance metrics
+        df['performance_score'] = self._calculate_performance_score(df)
+        
+        # Add stale detection
+        df['is_stale'] = self._detect_stale_proposals(df)
+        
+        return df
+    
+    def _calculate_approval_time(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate approval time in days"""
+        def calculate_time(row):
+            if pd.notna(row.get('merged_at')):
+                created = pd.to_datetime(row.get('created_at'))
+                merged = pd.to_datetime(row.get('merged_at'))
+                return (merged - created).days
+            return None
+        
+        return df.apply(calculate_time, axis=1)
+    
+    def _categorize_proposal(self, row) -> str:
+        """Categorize a proposal based on its state and characteristics"""
+        state = row.get('state', '').lower()
+        merged_at = row.get('merged_at')
+        closed_at = row.get('closed_at')
+        
+        if pd.notna(merged_at):
+            return 'APPROVED'
+        elif state == 'closed' and pd.notna(closed_at):
+            return 'REJECTED'
+        elif state == 'open':
+            # Check if stale
+            created_at = pd.to_datetime(row.get('created_at'))
+            if pd.notna(created_at):
+                days_open = (datetime.now() - created_at).days
+                if days_open > 60:
+                    return 'STALE'
+            return 'PENDING'
         else:
-            return "UNKNOWN"
+            return 'CLOSED'
     
-    def calculate_approval_time(self, proposal: Dict) -> Optional[float]:
-        """Calculate time from creation to approval/merge/rejection in days"""
-        created_at = self.parse_date(proposal.get('created_at'))
-        if not created_at:
-            return None
+    def _calculate_performance_score(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate a performance score based on various metrics"""
+        score = pd.Series(0.0, index=df.index)
         
-        # Check for merge time
-        merged_at = self.parse_date(proposal.get('merged_at'))
-        if merged_at:
-            # Ensure both dates are timezone-aware
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=datetime.timezone.utc)
-            if merged_at.tzinfo is None:
-                merged_at = merged_at.replace(tzinfo=datetime.timezone.utc)
-            return (merged_at - created_at).total_seconds() / 86400  # Convert to days
+        # Base score for approved proposals
+        score += (df['category'] == 'APPROVED').astype(int) * 10
         
-        # Check for close time (rejection)
-        closed_at = self.parse_date(proposal.get('closed_at'))
-        if closed_at:
-            # Ensure both dates are timezone-aware
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=datetime.timezone.utc)
-            if closed_at.tzinfo is None:
-                closed_at = closed_at.replace(tzinfo=datetime.timezone.utc)
-            return (closed_at - created_at).total_seconds() / 86400
+        # Bonus for quick approval
+        approval_time = df['approval_time_days']
+        score += ((approval_time < 30) & (approval_time > 0)).astype(int) * 5
         
-        return None
+        # Bonus for engagement (comments, reviews)
+        score += np.minimum(df['comments_count'] / 10, 5)
+        score += np.minimum(df['review_comments_count'] / 5, 5)
+        
+        # Bonus for activity (commits, changes)
+        score += np.minimum(df['commits_count'] / 5, 5)
+        score += np.minimum((df['additions_count'] + df['deletions_count']) / 100, 5)
+        
+        return score
     
-    def extract_rejection_reason(self, proposal: Dict) -> Optional[str]:
-        """Extract rejection reason from comments"""
-        if proposal.get('merged', False):
-            return None
+    def _detect_stale_proposals(self, df: pd.DataFrame) -> pd.Series:
+        """Detect stale proposals (over 60 days old)"""
+        def is_stale(row):
+            if row.get('state', '').lower() != 'open':
+                return False
+            
+            created_at = pd.to_datetime(row.get('created_at'))
+            if pd.notna(created_at):
+                days_open = (datetime.now() - created_at).days
+                return days_open > 60
+            return False
         
-        comments = proposal.get('comments', [])
-        rejection_keywords = [
-            'reject', 'rejected', 'decline', 'declined', 'not approved',
-            'does not meet', 'insufficient', 'incomplete', 'denied'
-        ]
-        
-        for comment in comments:
-            body = comment.get('body', '').lower()
-            if any(keyword in body for keyword in rejection_keywords):
-                return comment.get('body', '')
-        
-        return None
+        return df.apply(is_stale, axis=1)
     
-    def extract_bounty_amount(self, body: str) -> Optional[float]:
-        """Extract bounty/grant amount from proposal body"""
-        if not body:
-            return None
+    def get_summary_stats(self, df: pd.DataFrame) -> dict:
+        """Get summary statistics for the dataset"""
+        if df.empty:
+            return {}
         
-        # Common patterns for amounts
-        amount_patterns = [
-            r'\$(\d+(?:,\d{3})*(?:\.\d{2})?)',
-            r'(\d+(?:,\d{3})*(?:\.\d{2})?)\s*USD',
-            r'(\d+(?:,\d{3})*(?:\.\d{2})?)\s*DOT',
-            r'(\d+(?:,\d{3})*(?:\.\d{2})?)\s*USDC',
-            r'amount[:\s]*(\d+(?:,\d{3})*(?:\.\d{2})?)',
-            r'budget[:\s]*(\d+(?:,\d{3})*(?:\.\d{2})?)',
-            r'grant[:\s]*(\d+(?:,\d{3})*(?:\.\d{2})?)'
-        ]
-        
-        for pattern in amount_patterns:
-            matches = re.findall(pattern, body, re.IGNORECASE)
-            if matches:
-                try:
-                    # Clean up the amount string and convert to float
-                    amount_str = matches[0].replace(',', '')
-                    return float(amount_str)
-                except ValueError:
-                    continue
-        
-        return None
-    
-    def process_proposal(self, proposal: Dict) -> Dict:
-        """Process a single grant proposal and extract all metrics"""
-        processed = {
-            'id': proposal.get('id'),
-            'number': proposal.get('number'),
-            'title': proposal.get('title', ''),
-            'description': proposal.get('body', ''),
-            'author': proposal.get('user', {}).get('login', ''),
-            'repository': proposal.get('repository', ''),
-            'repository_info': proposal.get('repository_info', {}),
-            'state': proposal.get('state', ''),
-            'merged': proposal.get('merged', False),
-            'created_at': proposal.get('created_at'),
-            'updated_at': proposal.get('updated_at'),
-            'closed_at': proposal.get('closed_at'),
-            'merged_at': proposal.get('merged_at'),
-            'milestones': self.extract_milestones(proposal.get('body', '')),
-            'curators': self.extract_curators(proposal),
-            'category': self.determine_category(proposal),
-            'approval_time_days': self.calculate_approval_time(proposal),
-            'rejection_reason': self.extract_rejection_reason(proposal),
-            'bounty_amount': self.extract_bounty_amount(proposal.get('body', '')),
-            'labels': [label.get('name', '') for label in proposal.get('labels', [])],
-            'comments_count': len(proposal.get('comments', [])),
-            'reviews_count': len(proposal.get('reviews', [])),
-            'additions': proposal.get('additions', 0),
-            'deletions': proposal.get('deletions', 0),
-            'changed_files': proposal.get('changed_files', 0)
+        stats = {
+            'total_proposals': len(df),
+            'approved_proposals': len(df[df['category'] == 'APPROVED']),
+            'pending_proposals': len(df[df['category'] == 'PENDING']),
+            'rejected_proposals': len(df[df['category'] == 'REJECTED']),
+            'stale_proposals': len(df[df['category'] == 'STALE']),
+            'avg_approval_time': df[df['approval_time_days'].notna()]['approval_time_days'].mean(),
+            'total_repositories': df['repository'].nunique(),
+            'total_authors': df['author'].nunique(),
+            'total_curators': len(set([curator for curators in df['curators'] for curator in curators if curator]))
         }
         
-        return processed
+        return stats
     
-    def process_all_proposals(self, proposals: Dict[str, List[Dict]]) -> pd.DataFrame:
-        """Process all grant proposals and return a DataFrame"""
-        all_processed = []
+    def get_program_stats(self, df: pd.DataFrame) -> dict:
+        """Get statistics by grant program"""
+        if df.empty:
+            return {}
         
-        for repo_key, repo_proposals in proposals.items():
-            logger.info(f"Processing {len(repo_proposals)} proposals from {repo_key}")
-            
-            for proposal in repo_proposals:
-                try:
-                    processed = self.process_proposal(proposal)
-                    all_processed.append(processed)
-                except Exception as e:
-                    logger.error(f"Error processing proposal {proposal.get('number', 'unknown')}: {e}")
-                    continue
+        program_stats = {}
         
-        df = pd.DataFrame(all_processed)
-        
-        # Convert date columns
-        date_columns = ['created_at', 'updated_at', 'closed_at', 'merged_at']
-        for col in date_columns:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col])
-        
-        return df if not df.empty else pd.DataFrame(columns=[
-            'id', 'number', 'title', 'description', 'author', 'repository', 
-            'repository_info', 'state', 'merged', 'created_at', 'updated_at', 
-            'closed_at', 'merged_at', 'milestones', 'curators', 'category', 
-            'approval_time_days', 'rejection_reason', 'bounty_amount', 'labels', 
-            'comments_count', 'reviews_count', 'additions', 'deletions', 'changed_files'
-        ])
-    
-    def calculate_performance_metrics(self, df: pd.DataFrame) -> Dict:
-        """Calculate performance metrics for grant programs"""
-        metrics = {}
-        
-        # Overall statistics
-        metrics['total_proposals'] = len(df)
-        metrics['approved_proposals'] = len(df[df['category'] == 'APPROVED'])
-        metrics['rejected_proposals'] = len(df[df['category'] == 'REJECTED'])
-        metrics['pending_proposals'] = len(df[df['category'] == 'PENDING'])
-        metrics['stale_proposals'] = len(df[df['category'] == 'STALE'])
-        
-        # Approval rate
-        if metrics['total_proposals'] > 0:
-            metrics['approval_rate'] = metrics['approved_proposals'] / metrics['total_proposals']
-        else:
-            metrics['approval_rate'] = 0
-        
-        # Time metrics
-        approval_times = df[df['approval_time_days'].notna()]['approval_time_days']
-        if len(approval_times) > 0:
-            metrics['avg_approval_time_days'] = approval_times.mean()
-            metrics['median_approval_time_days'] = approval_times.median()
-            metrics['min_approval_time_days'] = approval_times.min()
-            metrics['max_approval_time_days'] = approval_times.max()
-        
-        # Author statistics
-        metrics['unique_authors'] = df['author'].nunique()
-        metrics['top_authors'] = df['author'].value_counts().head(10).to_dict()
-        
-        # Curator statistics
-        all_curators = []
-        for curators in df['curators']:
-            all_curators.extend(curators)
-        metrics['unique_curators'] = len(set(all_curators))
-        
-        # Bounty statistics
-        bounty_amounts = df[df['bounty_amount'].notna()]['bounty_amount']
-        if len(bounty_amounts) > 0:
-            metrics['total_bounty_amount'] = bounty_amounts.sum()
-            metrics['avg_bounty_amount'] = bounty_amounts.mean()
-            metrics['max_bounty_amount'] = bounty_amounts.max()
-        
-        # Repository breakdown
-        metrics['repository_breakdown'] = df['repository'].value_counts().to_dict()
-        
-        # Category breakdown
-        metrics['category_breakdown'] = df['category'].value_counts().to_dict()
-        
-        # Program-specific metrics
-        metrics['program_metrics'] = {}
         for repo in df['repository'].unique():
-            repo_data = df[df['repository'] == repo]
-            repo_metrics = {
-                'total': len(repo_data),
-                'approved': len(repo_data[repo_data['category'] == 'APPROVED']),
-                'rejected': len(repo_data[repo_data['category'] == 'REJECTED']),
-                'pending': len(repo_data[repo_data['category'] == 'PENDING']),
-                'stale': len(repo_data[repo_data['category'] == 'STALE']),
-                'approval_rate': len(repo_data[repo_data['category'] == 'APPROVED']) / len(repo_data) if len(repo_data) > 0 else 0,
-                'avg_approval_time': repo_data[repo_data['approval_time_days'].notna()]['approval_time_days'].mean() if len(repo_data[repo_data['approval_time_days'].notna()]) > 0 else 0,
-                'unique_authors': repo_data['author'].nunique(),
-                'unique_curators': len(set([curator for curators in repo_data['curators'] for curator in curators]))
+            repo_df = df[df['repository'] == repo]
+            
+            program_stats[repo] = {
+                'total_proposals': len(repo_df),
+                'approved_proposals': len(repo_df[repo_df['category'] == 'APPROVED']),
+                'pending_proposals': len(repo_df[repo_df['category'] == 'PENDING']),
+                'rejected_proposals': len(repo_df[repo_df['category'] == 'REJECTED']),
+                'stale_proposals': len(repo_df[repo_df['category'] == 'STALE']),
+                'avg_approval_time': repo_df[repo_df['approval_time_days'].notna()]['approval_time_days'].mean(),
+                'total_authors': repo_df['author'].nunique(),
+                'total_curators': len(set([curator for curators in repo_df['curators'] for curator in curators if curator]))
             }
-            metrics['program_metrics'][repo] = repo_metrics
         
-        return metrics 
+        return program_stats
+    
+    def get_curator_stats(self, df: pd.DataFrame) -> dict:
+        """Get statistics by curator"""
+        if df.empty:
+            return {}
+        
+        # Flatten curators list
+        curator_data = []
+        for _, row in df.iterrows():
+            for curator in row.get('curators', []):
+                if curator:
+                    curator_data.append({
+                        'curator': curator,
+                        'proposal_id': row.get('id'),
+                        'category': row.get('category'),
+                        'repository': row.get('repository'),
+                        'approval_time_days': row.get('approval_time_days')
+                    })
+        
+        if not curator_data:
+            return {}
+        
+        curator_df = pd.DataFrame(curator_data)
+        
+        curator_stats = {}
+        for curator in curator_df['curator'].unique():
+            curator_proposals = curator_df[curator_df['curator'] == curator]
+            
+            curator_stats[curator] = {
+                'total_proposals': len(curator_proposals),
+                'approved_proposals': len(curator_proposals[curator_proposals['category'] == 'APPROVED']),
+                'rejected_proposals': len(curator_proposals[curator_proposals['category'] == 'REJECTED']),
+                'pending_proposals': len(curator_proposals[curator_proposals['category'] == 'PENDING']),
+                'avg_approval_time': curator_proposals[curator_proposals['approval_time_days'].notna()]['approval_time_days'].mean(),
+                'programs_worked_on': curator_proposals['repository'].nunique()
+            }
+        
+        return curator_stats 
