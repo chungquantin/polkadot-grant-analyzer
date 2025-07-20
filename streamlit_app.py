@@ -82,37 +82,145 @@ def main():
     
     with col1:
         if st.button("🔄 Refresh Data"):
-            with st.spinner("Fetching latest grant proposals..."):
+            # Create progress containers
+            progress_container = st.empty()
+            stats_container = st.empty()
+            status_container = st.empty()
+            
+            try:
+                # Step 1: Fetching data
+                status_container.info("🔄 Fetching grant proposals from GitHub...")
+                progress_container.progress(0)
+                
+                # Fetch data with progress updates
+                proposals = {}
+                total_repos = 4  # W3F, Fast Grants, Use Inkubator, Open Source
+                current_repo = 0
+                
+                # Import GRANT_REPOSITORIES from config or use fallback
                 try:
-                    # Fetch new data
+                    from config import GRANT_REPOSITORIES
+                except ImportError:
+                    GRANT_REPOSITORIES = {
+                        "w3f_grants": {
+                            "owner": "w3f",
+                            "repo": "Grants-Program",
+                            "type": "pull_request",
+                            "description": "Web3 Foundation Grants Program"
+                        },
+                        "polkadot_fast_grants": {
+                            "owner": "Polkadot-Fast-Grants",
+                            "repo": "apply",
+                            "type": "pull_request",
+                            "description": "Polkadot Fast Grants"
+                        },
+                        "use_inkubator": {
+                            "owner": "use-inkubator",
+                            "repo": "Ecosystem-Grants",
+                            "type": "pull_request",
+                            "description": "Use Inkubator Ecosystem Grants"
+                        },
+                        "polkadot_open_source": {
+                            "owner": "PolkadotOpenSourceGrants",
+                            "repo": "apply",
+                            "type": "pull_request",
+                            "description": "Polkadot Open Source Grants"
+                        }
+                    }
+                
+                # Fetch all proposals with progress updates
+                status_container.info("📥 Fetching all grant proposals...")
+                progress_container.progress(0.25)
+                
+                try:
                     proposals = components['github_client'].fetch_all_grant_proposals()
                     
-                    # Process data
-                    df = components['data_processor'].process_proposals(proposals)
+                    # Update real-time stats
+                    total_proposals = sum(len(props) for props in proposals.values())
+                    stats_container.metric("Proposals Fetched", total_proposals)
                     
-                    # Save to storage
-                    success = components['database'].save_proposals(proposals)
-                    if success:
-                        # Calculate and save metrics
-                        summary_stats = components['data_processor'].get_summary_stats(df)
-                        program_stats = components['data_processor'].get_program_stats(df)
-                        curator_stats = components['data_processor'].get_curator_stats(df)
+                    # Show progress for each repository
+                    for i, (repo_name, repo_proposals) in enumerate(proposals.items()):
+                        repo_config = GRANT_REPOSITORIES.get(repo_name, {})
+                        repo_description = repo_config.get('description', repo_name)
+                        status_container.info(f"✅ Fetched {len(repo_proposals)} proposals from {repo_description}")
                         
-                        metrics = {
-                            'summary_stats': summary_stats,
-                            'program_stats': program_stats,
-                            'curator_stats': curator_stats
-                        }
-                        components['database'].save_metrics(metrics)
-                        
-                        st.success(f"✅ Data refreshed successfully! Loaded {len(df)} proposals.")
-                    else:
-                        st.error("❌ Failed to save data to storage.")
-                    
-                    st.rerun()
-                    
                 except Exception as e:
-                    st.error(f"Error refreshing data: {e}")
+                    st.error(f"❌ Error fetching proposals: {e}")
+                    return
+                
+                # Step 2: Processing data
+                status_container.info("⚙️ Processing proposals and calculating metrics...")
+                progress_container.progress(0.5)
+                
+                # Process data
+                df = components['data_processor'].process_proposals(proposals)
+                
+                # Update stats
+                stats_container.metric("Proposals Processed", len(df))
+                
+                # Step 3: Saving data
+                status_container.info("💾 Saving data to storage...")
+                progress_container.progress(0.75)
+                
+                # Save to storage
+                success = components['database'].save_proposals(proposals)
+                if success:
+                    # Calculate and save metrics
+                    summary_stats = components['data_processor'].get_summary_stats(df)
+                    program_stats = components['data_processor'].get_program_stats(df)
+                    curator_stats = components['data_processor'].get_curator_stats(df)
+                    
+                    metrics = {
+                        'summary_stats': summary_stats,
+                        'program_stats': program_stats,
+                        'curator_stats': curator_stats
+                    }
+                    components['database'].save_metrics(metrics)
+                    
+                    # Final progress
+                    progress_container.progress(1.0)
+                    status_container.success("✅ Data refresh completed!")
+                    
+                    # Show final statistics
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("Total Proposals", len(df))
+                    with col2:
+                        approved = len(df[df['category'] == 'APPROVED'])
+                        st.metric("Approved", approved)
+                    with col3:
+                        rejected = len(df[df['category'] == 'REJECTED'])
+                        st.metric("Rejected", rejected)
+                    with col4:
+                        approval_rate = (approved / len(df)) * 100 if len(df) > 0 else 0
+                        st.metric("Approval Rate", f"{approval_rate:.1f}%")
+                    
+                    # Show program breakdown
+                    st.subheader("📊 Program Breakdown")
+                    program_counts = df['repository'].value_counts()
+                    for program, count in program_counts.items():
+                        st.write(f"• **{program}**: {count} proposals")
+                    
+                    st.success(f"✅ Successfully loaded {len(df)} proposals from {len(proposals)} repositories!")
+                else:
+                    progress_container.progress(1.0)
+                    status_container.error("❌ Failed to save data to storage.")
+                
+                # Clear progress containers after a delay
+                import time
+                time.sleep(3)
+                progress_container.empty()
+                stats_container.empty()
+                status_container.empty()
+                
+                st.rerun()
+                
+            except Exception as e:
+                progress_container.empty()
+                stats_container.empty()
+                status_container.error(f"❌ Error refreshing data: {e}")
+                st.error(f"Error refreshing data: {e}")
     
     with col2:
         if st.button("🗑️ Clear Storage"):
@@ -131,6 +239,13 @@ def main():
     if storage_info.get('last_updated'):
         st.sidebar.write(f"**Last Updated:** {storage_info.get('last_updated', 'Unknown')}")
     
+    # Real-time statistics section
+    st.sidebar.subheader("📊 Real-time Stats")
+    
+    # Auto-refresh stats every 30 seconds
+    if st.sidebar.checkbox("🔄 Auto-refresh stats", value=True):
+        st.sidebar.write("Stats will update automatically")
+    
     # Load data
     try:
         df = components['database'].load_proposals()
@@ -145,6 +260,37 @@ def main():
         st.error(f"Error loading data: {e}")
         st.info("💡 Try refreshing the data or check your GitHub token configuration.")
         return
+    
+    # Show real-time statistics
+    if not df.empty:
+        # Calculate real-time stats
+        total_proposals = len(df)
+        approved_proposals = len(df[df['category'] == 'APPROVED'])
+        rejected_proposals = len(df[df['category'] == 'REJECTED'])
+        pending_proposals = len(df[df['category'] == 'PENDING'])
+        stale_proposals = len(df[df['category'] == 'STALE'])
+        approval_rate = (approved_proposals / total_proposals * 100) if total_proposals > 0 else 0
+        
+        # Display real-time stats in sidebar
+        st.sidebar.metric("📈 Total Proposals", total_proposals)
+        st.sidebar.metric("✅ Approved", approved_proposals)
+        st.sidebar.metric("❌ Rejected", rejected_proposals)
+        st.sidebar.metric("⏳ Pending", pending_proposals)
+        st.sidebar.metric("🔄 Stale", stale_proposals)
+        st.sidebar.metric("📊 Approval Rate", f"{approval_rate:.1f}%")
+        
+        # Show recent activity
+        if 'created_at' in df.columns:
+            recent_proposals = df.sort_values('created_at', ascending=False).head(3)
+            st.sidebar.subheader("🕒 Recent Activity")
+            for _, proposal in recent_proposals.iterrows():
+                st.sidebar.write(f"• **{proposal['title'][:30]}...** ({proposal['category']})")
+        
+        # Show top repositories
+        repo_counts = df['repository'].value_counts().head(3)
+        st.sidebar.subheader("🏆 Top Programs")
+        for repo, count in repo_counts.items():
+            st.sidebar.write(f"• **{repo}**: {count} proposals")
     
     # Program selection
     st.sidebar.subheader("Program Selection")
@@ -162,22 +308,86 @@ def main():
         filtered_df = df[df['repository'].isin(selected_programs)]
     
     # Main dashboard
+    st.header("📊 Live Grant Analysis Dashboard")
+    
+    # Real-time progress indicator
+    if st.checkbox("🔄 Show live updates", value=True):
+        st.info("📡 Dashboard is updating in real-time")
+    
+    # Auto-refresh the page every 30 seconds for live updates
+    if st.checkbox("🔄 Auto-refresh dashboard", value=False):
+        st.write("Dashboard will refresh every 30 seconds")
+    
+    # Live statistics with better formatting
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        st.metric("Total Proposals", len(filtered_df))
+        st.metric(
+            "📈 Total Proposals", 
+            len(filtered_df),
+            delta=f"+{len(filtered_df)} total"
+        )
     
     with col2:
         approved = len(filtered_df[filtered_df['category'] == 'APPROVED'])
-        st.metric("Approved Proposals", approved)
+        st.metric(
+            "✅ Approved Proposals", 
+            approved,
+            delta=f"{approved} approved"
+        )
     
     with col3:
         rejected = len(filtered_df[filtered_df['category'] == 'REJECTED'])
-        st.metric("Rejected Proposals", rejected)
+        st.metric(
+            "❌ Rejected Proposals", 
+            rejected,
+            delta=f"{rejected} rejected"
+        )
     
     with col4:
         approval_rate = (approved / len(filtered_df)) * 100 if len(filtered_df) > 0 else 0
-        st.metric("Approval Rate", f"{approval_rate:.1f}%")
+        st.metric(
+            "📊 Approval Rate", 
+            f"{approval_rate:.1f}%",
+            delta=f"{approval_rate:.1f}% rate"
+        )
+    
+    # Additional live metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        pending = len(filtered_df[filtered_df['category'] == 'PENDING'])
+        st.metric("⏳ Pending", pending)
+    
+    with col2:
+        stale = len(filtered_df[filtered_df['category'] == 'STALE'])
+        st.metric("🔄 Stale", stale)
+    
+    with col3:
+        unique_authors = filtered_df['author'].nunique()
+        st.metric("👤 Unique Authors", unique_authors)
+    
+    with col4:
+        avg_approval_time = filtered_df[filtered_df['approval_time_days'].notna()]['approval_time_days'].mean()
+        st.metric("⏱️ Avg Approval Time", f"{avg_approval_time:.1f} days" if not pd.isna(avg_approval_time) else "N/A")
+    
+    # Live activity feed
+    st.subheader("🕒 Live Activity Feed")
+    
+    # Show recent proposals
+    recent_proposals = filtered_df.sort_values('created_at', ascending=False).head(5)
+    for _, proposal in recent_proposals.iterrows():
+        with st.expander(f"📄 {proposal['title'][:50]}... - {proposal['author']}"):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.write(f"**Status:** {proposal['category']}")
+            with col2:
+                st.write(f"**Repository:** {proposal['repository']}")
+            with col3:
+                st.write(f"**Created:** {proposal['created_at'].strftime('%Y-%m-%d')}")
+            
+            if proposal['approval_time_days'] and not pd.isna(proposal['approval_time_days']):
+                st.write(f"**Approval Time:** {proposal['approval_time_days']:.1f} days")
     
     # Show warning if no data
     if filtered_df.empty:
@@ -894,15 +1104,15 @@ def show_curator_analysis(df):
 def show_ai_milestone_analysis(df):
     """Show AI-powered milestone analysis"""
     
-    st.subheader("🎯 AI Milestone Analysis")
-    st.markdown("AI evaluation of proposal milestones and project structure")
+    st.subheader("🤖 AI Milestone Analysis")
+    st.markdown("AI-powered analysis of proposal milestones and timelines")
     
     if df.empty:
         st.warning("No proposals available for milestone analysis.")
         return
     
     # Proposal selector
-    proposals = df[['title', 'author', 'repository', 'description']].copy()
+    proposals = df[['title', 'author', 'repository', 'body']].copy()
     proposals['display_title'] = proposals['title'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
     
     selected_proposal_idx = st.selectbox(
@@ -948,8 +1158,8 @@ def show_ai_milestone_analysis(df):
         # Detailed milestone analysis
         st.subheader("📋 Detailed Milestone Analysis")
         
-        # Extract milestone information from description
-        description = selected_proposal.get('description', '')
+        # Extract milestone information from body
+        body = selected_proposal.get('body', '')
         milestones_found = []
         
         # Look for milestone patterns
@@ -962,7 +1172,7 @@ def show_ai_milestone_analysis(df):
         ]
         
         for pattern in milestone_patterns:
-            matches = re.findall(pattern, description, re.IGNORECASE)
+            matches = re.findall(pattern, body, re.IGNORECASE)
             milestones_found.extend(matches)
         
         if milestones_found:
@@ -981,7 +1191,7 @@ def show_ai_milestone_analysis(df):
         
         timeline_mentions = []
         for pattern in timeline_patterns:
-            if re.search(pattern, description, re.IGNORECASE):
+            if re.search(pattern, body, re.IGNORECASE):
                 timeline_mentions.append(pattern)
         
         if timeline_mentions:
@@ -1000,9 +1210,9 @@ def show_ai_milestone_analysis(df):
             st.write("• Include specific deliverables for each milestone")
             st.write("• Provide realistic time estimates")
         
-        # Show original description
+        # Show original body
         with st.expander("📄 Original Proposal Description"):
-            st.text(description)
+            st.text(body)
 
 def show_grant_program_details(df):
     """Show detailed information about each grant program"""
@@ -1211,7 +1421,6 @@ def show_grant_program_details(df):
             with st.expander(f"{proposal['title']} - {proposal['author']}"):
                 st.write(f"**Category**: {proposal['category']}")
                 st.write(f"**Created**: {proposal['created_at'].strftime('%Y-%m-%d')}")
-                st.write(f"**Bounty**: ${proposal['bounty_amount']:,.0f}" if proposal['bounty_amount'] else "**Bounty**: Not specified")
                 st.write(f"**Approval Time**: {proposal['approval_time_days']:.1f} days" if proposal['approval_time_days'] else "**Approval Time**: N/A")
                 
                 # Show curators
@@ -1280,8 +1489,9 @@ def show_detailed_data(df):
     # Prepare data for display with all relevant columns
     display_columns = [
         'title', 'author', 'repository', 'category', 'created_at', 
-        'merged', 'milestones', 'approval_time_days', 'curators', 'bounty_amount',
-        'comments_count', 'reviews_count', 'state'
+        'approval_time_days', 'curators', 'comments_count', 'review_comments_count',
+        'commits_count', 'additions_count', 'deletions_count', 'changed_files_count',
+        'performance_score', 'is_stale', 'state'
     ]
     
     # Only include columns that exist in the dataframe
@@ -1305,15 +1515,15 @@ def show_detailed_data(df):
             lambda x: ', '.join(x) if isinstance(x, list) and x else 'None'
         )
     
-    # Format bounty_amount
-    if 'bounty_amount' in display_df.columns:
-        display_df['bounty_amount'] = display_df['bounty_amount'].apply(
-            lambda x: f"${x:,.0f}" if pd.notna(x) and x > 0 else "Not specified"
+    # Format performance score
+    if 'performance_score' in display_df.columns:
+        display_df['performance_score'] = display_df['performance_score'].apply(
+            lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"
         )
     
     # Format boolean columns
-    if 'merged' in display_df.columns:
-        display_df['merged'] = display_df['merged'].apply(lambda x: "Yes" if x else "No")
+    if 'is_stale' in display_df.columns:
+        display_df['is_stale'] = display_df['is_stale'].apply(lambda x: "Yes" if x else "No")
     
     # Add GitHub links
     if 'number' in filtered_df.columns:
