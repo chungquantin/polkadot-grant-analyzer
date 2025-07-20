@@ -1300,32 +1300,8 @@ def show_grant_program_details(df):
             )
             st.plotly_chart(fig, use_container_width=True, key=f"program_approval_times_{selected_program}")
         
-        # Bounty analysis
-        bounty_amounts = pd.to_numeric(program_data['bounty_amount'], errors='coerce')
-        bounty_amounts = bounty_amounts[bounty_amounts.notna()]
-        
-        if len(bounty_amounts) > 0:
-            st.subheader("💰 Bounty Analysis")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Total Bounty Amount", f"${bounty_amounts.sum():,.0f}")
-            
-            with col2:
-                st.metric("Average Bounty", f"${bounty_amounts.mean():,.0f}")
-            
-            with col3:
-                st.metric("Largest Bounty", f"${bounty_amounts.max():,.0f}")
-            
-            # Bounty distribution
-            fig = px.histogram(
-                x=bounty_amounts,
-                nbins=20,
-                title=f"Bounty Amount Distribution - {selected_program}",
-                labels={'x': 'Bounty Amount ($)', 'y': 'Count'}
-            )
-            st.plotly_chart(fig, use_container_width=True, key=f"program_bounty_dist_{selected_program}")
+        # Bounty analysis (removed since bounty_amount not available in new structure)
+        # Note: Bounty amount data is not available in the current data structure
         
         # Top authors for this program
         st.subheader("👤 Top Authors")
