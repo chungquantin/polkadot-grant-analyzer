@@ -11,10 +11,29 @@ except ImportError:
     # Fallback values if config module is not available
     DATABASE_PATH = "grants_database.db"
 
+# Try to import cloud storage
+try:
+    from cloud_storage import CloudStorage
+    CLOUD_STORAGE_AVAILABLE = True
+except ImportError:
+    CLOUD_STORAGE_AVAILABLE = False
+
 class GrantDatabase:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DATABASE_PATH
-        self.init_database()
+        self.cloud_storage = None
+        
+        # Initialize cloud storage if available
+        if CLOUD_STORAGE_AVAILABLE:
+            try:
+                self.cloud_storage = CloudStorage()
+            except Exception as e:
+                print(f"Cloud storage initialization failed: {e}")
+                self.cloud_storage = None
+        
+        # Initialize SQLite database for local development
+        if not self.cloud_storage:
+            self.init_database()
     
     def init_database(self):
         """Initialize the database with required tables"""
@@ -68,7 +87,16 @@ class GrantDatabase:
             conn.commit()
     
     def save_proposals(self, proposals_data: dict):
-        """Save proposals data to database"""
+        """Save proposals data to storage (cloud or local)"""
+        if self.cloud_storage:
+            # Use cloud storage
+            return self.cloud_storage.save_proposals(proposals_data)
+        else:
+            # Use local SQLite database
+            return self._save_proposals_sqlite(proposals_data)
+    
+    def _save_proposals_sqlite(self, proposals_data: dict):
+        """Save proposals data to SQLite database"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -128,9 +156,19 @@ class GrantDatabase:
                         continue
             
             conn.commit()
+            return True
     
     def load_proposals(self) -> pd.DataFrame:
-        """Load proposals from database"""
+        """Load proposals from storage (cloud or local)"""
+        if self.cloud_storage:
+            # Use cloud storage
+            return self.cloud_storage.load_proposals()
+        else:
+            # Use local SQLite database
+            return self._load_proposals_sqlite()
+    
+    def _load_proposals_sqlite(self) -> pd.DataFrame:
+        """Load proposals from SQLite database"""
         with sqlite3.connect(self.db_path) as conn:
             query = '''
                 SELECT * FROM proposals ORDER BY created_at DESC
@@ -153,7 +191,16 @@ class GrantDatabase:
             return df
     
     def save_metrics(self, metrics: dict):
-        """Save metrics to database"""
+        """Save metrics to storage (cloud or local)"""
+        if self.cloud_storage:
+            # Use cloud storage
+            return self.cloud_storage.save_metrics(metrics)
+        else:
+            # Use local SQLite database
+            return self._save_metrics_sqlite(metrics)
+    
+    def _save_metrics_sqlite(self, metrics: dict):
+        """Save metrics to SQLite database"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -170,9 +217,19 @@ class GrantDatabase:
                 ''', (metric_name, metric_value))
             
             conn.commit()
+            return True
     
     def load_metrics(self) -> dict:
-        """Load metrics from database"""
+        """Load metrics from storage (cloud or local)"""
+        if self.cloud_storage:
+            # Use cloud storage
+            return self.cloud_storage.load_metrics()
+        else:
+            # Use local SQLite database
+            return self._load_metrics_sqlite()
+    
+    def _load_metrics_sqlite(self) -> dict:
+        """Load metrics from SQLite database"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT metric_name, metric_value FROM metrics')
@@ -190,43 +247,70 @@ class GrantDatabase:
             return metrics
     
     def get_database_info(self) -> dict:
-        """Get information about the database"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Get table info
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = [row[0] for row in cursor.fetchall()]
-            
-            # Get row counts
-            info = {'tables': tables}
-            for table in tables:
-                cursor.execute(f"SELECT COUNT(*) FROM {table}")
-                count = cursor.fetchone()[0]
-                info[f'{table}_count'] = count
-            
-            # Get database size
-            if os.path.exists(self.db_path):
-                info['database_size_mb'] = os.path.getsize(self.db_path) / (1024 * 1024)
-            else:
-                info['database_size_mb'] = 0
-            
+        """Get information about the storage"""
+        if self.cloud_storage:
+            # Get cloud storage info
+            info = self.cloud_storage.get_storage_info()
+            info['storage_type'] = 'cloud_session_state'
             return info
+        else:
+            # Get SQLite database info
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get table info
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [row[0] for row in cursor.fetchall()]
+                
+                # Get row counts
+                info = {'tables': tables, 'storage_type': 'sqlite'}
+                for table in tables:
+                    cursor.execute(f"SELECT COUNT(*) FROM {table}")
+                    count = cursor.fetchone()[0]
+                    info[f'{table}_count'] = count
+                
+                # Get database size
+                if os.path.exists(self.db_path):
+                    info['database_size_mb'] = os.path.getsize(self.db_path) / (1024 * 1024)
+                else:
+                    info['database_size_mb'] = 0
+                
+                return info
     
     def clear_database(self):
-        """Clear all data from the database"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('DELETE FROM proposals')
-            cursor.execute('DELETE FROM metrics')
-            conn.commit()
+        """Clear all stored data"""
+        if self.cloud_storage:
+            # Clear cloud storage
+            return self.cloud_storage.clear_storage()
+        else:
+            # Clear SQLite database
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM proposals')
+                cursor.execute('DELETE FROM metrics')
+                conn.commit()
+            return True
+    
+    def has_data(self) -> bool:
+        """Check if there's any data stored"""
+        if self.cloud_storage:
+            return self.cloud_storage.has_data()
+        else:
+            # Check SQLite database
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT COUNT(*) FROM proposals')
+                count = cursor.fetchone()[0]
+                return count > 0
     
     def backup_database(self, backup_path: str):
-        """Create a backup of the database"""
-        import shutil
-        shutil.copy2(self.db_path, backup_path)
+        """Create a backup of the database (SQLite only)"""
+        if not self.cloud_storage:
+            import shutil
+            shutil.copy2(self.db_path, backup_path)
     
     def restore_database(self, backup_path: str):
-        """Restore database from backup"""
-        import shutil
-        shutil.copy2(backup_path, self.db_path) 
+        """Restore database from backup (SQLite only)"""
+        if not self.cloud_storage:
+            import shutil
+            shutil.copy2(backup_path, self.db_path) 

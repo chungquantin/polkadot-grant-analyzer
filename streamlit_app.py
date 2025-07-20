@@ -88,27 +88,48 @@ def main():
                     proposals = components['github_client'].fetch_all_grant_proposals()
                     
                     # Process data
-                    df = components['data_processor'].process_all_proposals(proposals)
+                    df = components['data_processor'].process_proposals(proposals)
                     
-                    # Save to database
-                    components['database'].save_proposals(df)
+                    # Save to storage
+                    success = components['database'].save_proposals(proposals)
+                    if success:
+                        # Calculate and save metrics
+                        summary_stats = components['data_processor'].get_summary_stats(df)
+                        program_stats = components['data_processor'].get_program_stats(df)
+                        curator_stats = components['data_processor'].get_curator_stats(df)
+                        
+                        metrics = {
+                            'summary_stats': summary_stats,
+                            'program_stats': program_stats,
+                            'curator_stats': curator_stats
+                        }
+                        components['database'].save_metrics(metrics)
+                        
+                        st.success(f"✅ Data refreshed successfully! Loaded {len(df)} proposals.")
+                    else:
+                        st.error("❌ Failed to save data to storage.")
                     
-                    # Calculate and save metrics
-                    metrics = components['data_processor'].calculate_performance_metrics(df)
-                    components['database'].save_metrics(metrics)
-                    
-                    st.success("Data refreshed successfully!")
                     st.rerun()
                     
                 except Exception as e:
                     st.error(f"Error refreshing data: {e}")
     
     with col2:
-        if st.button("🗑️ Clear Database"):
+        if st.button("🗑️ Clear Storage"):
             if st.sidebar.checkbox("Confirm clear"):
                 components['database'].clear_database()
-                st.success("Database cleared!")
+                st.success("Storage cleared!")
                 st.rerun()
+    
+    # Show storage info
+    storage_info = components['database'].get_database_info()
+    st.sidebar.subheader("Storage Info")
+    st.sidebar.write(f"**Type:** {storage_info.get('storage_type', 'Unknown')}")
+    st.sidebar.write(f"**Proposals:** {storage_info.get('proposals_count', 0)}")
+    st.sidebar.write(f"**Metrics:** {storage_info.get('metrics_count', 0)}")
+    
+    if storage_info.get('last_updated'):
+        st.sidebar.write(f"**Last Updated:** {storage_info.get('last_updated', 'Unknown')}")
     
     # Load data
     try:
@@ -116,11 +137,13 @@ def main():
         metrics = components['database'].load_metrics()
         
         if df.empty:
-            st.warning("No data available. Please refresh data first.")
+            st.warning("📊 No data available. Please click '🔄 Refresh Data' to fetch the latest grant proposals.")
+            st.info("💡 This will fetch real data from GitHub repositories including W3F Grants, Polkadot Fast Grants, Use Inkubator, and Polkadot Open Source Grants.")
             return
             
     except Exception as e:
         st.error(f"Error loading data: {e}")
+        st.info("💡 Try refreshing the data or check your GitHub token configuration.")
         return
     
     # Program selection
