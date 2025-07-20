@@ -249,65 +249,39 @@ def show_overview_charts(df, metrics):
         st.plotly_chart(fig, use_container_width=True, key="overview_repositories")
     
     # Program-specific metrics
-    if 'program_metrics' in metrics and metrics['program_metrics']:
+    if 'program_stats' in metrics and metrics['program_stats']:
         st.subheader("Program-Specific Performance")
         
         program_data = []
-        for repo, repo_metrics in metrics['program_metrics'].items():
+        for repo, repo_metrics in metrics['program_stats'].items():
             program_data.append({
                 'Program': repo,
-                'Total': repo_metrics['total'],
-                'Approved': repo_metrics['approved'],
-                'Rejected': repo_metrics['rejected'],
-                'Pending': repo_metrics['pending'],
-                'Stale': repo_metrics['stale'],
-                'Approval Rate': repo_metrics['approval_rate'] * 100,
+                'Total': repo_metrics['total_proposals'],
+                'Approved': repo_metrics['approved_proposals'],
+                'Rejected': repo_metrics['rejected_proposals'],
+                'Pending': repo_metrics['pending_proposals'],
+                'Stale': repo_metrics['stale_proposals'],
+                'Approval Rate': (repo_metrics['approved_proposals'] / repo_metrics['total_proposals'] * 100) if repo_metrics['total_proposals'] > 0 else 0,
                 'Avg Approval Time': repo_metrics['avg_approval_time'],
-                'Unique Authors': repo_metrics['unique_authors'],
-                'Unique Curators': repo_metrics['unique_curators']
+                'Unique Authors': repo_metrics['total_authors'],
+                'Unique Curators': repo_metrics['total_curators']
             })
         
         program_df = pd.DataFrame(program_data)
         
         if not program_df.empty:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig = px.bar(
-                    program_df,
-                    x='Program',
-                    y='Approval Rate',
-                    title="Approval Rate by Program",
-                    color='Approval Rate',
-                    color_continuous_scale='RdYlGn'
-                )
-                st.plotly_chart(fig, use_container_width=True, key="program_approval_rates")
-            
-            with col2:
-                fig = px.bar(
-                    program_df,
-                    x='Program',
-                    y='Avg Approval Time',
-                    title="Average Approval Time by Program (Days)",
-                    color='Avg Approval Time',
-                    color_continuous_scale='Reds'
-                )
-                st.plotly_chart(fig, use_container_width=True, key="program_avg_times")
-            
-            # Program metrics table
-            st.subheader("Detailed Program Metrics")
-            st.dataframe(program_df, use_container_width=True)
-        else:
-            st.info("No program-specific metrics available.")
-    else:
-        st.info("Program-specific metrics not available.")
+            fig = px.bar(
+                program_df,
+                x='Program',
+                y=['Approved', 'Rejected', 'Pending', 'Stale'],
+                title="Program Performance Comparison",
+                barmode='stack'
+            )
+            st.plotly_chart(fig, use_container_width=True, key="program_performance")
     
     # Approval time analysis
     st.subheader("⏱️ Approval Time Analysis")
-    
-    # Convert approval_time_days to numeric, handling non-numeric values
-    approval_times = pd.to_numeric(df['approval_time_days'], errors='coerce')
-    approval_times = approval_times[approval_times.notna()]
+    approval_times = df[df['approval_time_days'].notna()]['approval_time_days']
     
     if len(approval_times) > 0:
         col1, col2 = st.columns(2)
@@ -316,61 +290,67 @@ def show_overview_charts(df, metrics):
             fig = px.histogram(
                 x=approval_times,
                 nbins=20,
-                title="Distribution of Approval Times",
+                title="Approval Time Distribution",
                 labels={'x': 'Days to Approval', 'y': 'Count'}
             )
-            st.plotly_chart(fig, use_container_width=True, key="approval_histogram")
+            st.plotly_chart(fig, use_container_width=True, key="approval_time_histogram")
         
         with col2:
-            # Box plot
-            fig = px.box(
-                y=approval_times,
-                title="Approval Time Distribution",
-                labels={'y': 'Days to Approval'}
-            )
-            st.plotly_chart(fig, use_container_width=True, key="approval_boxplot")
-        
-        # Approval time statistics
-        col1, col2, col3 = st.columns(3)
-        with col1:
+            # Approval time statistics
             st.metric("Average Approval Time", f"{approval_times.mean():.1f} days")
-        with col2:
             st.metric("Median Approval Time", f"{approval_times.median():.1f} days")
-        with col3:
             st.metric("Fastest Approval", f"{approval_times.min():.1f} days")
     else:
         st.info("No approval time data available for analysis.")
     
-    # Milestones analysis
-    st.subheader("📊 Milestones Analysis")
-    milestone_data = df[df['milestones'] > 0]
+    # Milestone analysis (using milestone column)
+    st.subheader("📊 Milestone Analysis")
+    milestone_data = df[df['milestone'].notna() & (df['milestone'] != '')]
     
     if len(milestone_data) > 0:
         col1, col2 = st.columns(2)
         
         with col1:
-            fig = px.histogram(
-                x=milestone_data['milestones'],
-                nbins=10,
-                title="Distribution of Milestones",
-                labels={'x': 'Number of Milestones', 'y': 'Count'}
+            milestone_counts = milestone_data['milestone'].value_counts().head(10)
+            fig = px.bar(
+                x=milestone_counts.values,
+                y=milestone_counts.index,
+                orientation='h',
+                title="Most Common Milestones"
             )
-            st.plotly_chart(fig, use_container_width=True, key="milestone_histogram")
+            st.plotly_chart(fig, use_container_width=True, key="milestone_distribution")
         
         with col2:
             # Milestone statistics
-            avg_milestones = milestone_data['milestones'].mean()
-            st.metric("Average Milestones", f"{avg_milestones:.1f}")
-            
-            milestone_counts = milestone_data['milestones'].value_counts().head(5)
-            fig = px.bar(
-                x=milestone_counts.index,
-                y=milestone_counts.values,
-                title="Most Common Milestone Counts"
-            )
-            st.plotly_chart(fig, use_container_width=True, key="milestone_counts")
+            st.metric("Proposals with Milestones", len(milestone_data))
+            st.metric("Unique Milestones", milestone_data['milestone'].nunique())
+            st.metric("Milestone Coverage", f"{(len(milestone_data) / len(df) * 100):.1f}%")
     else:
         st.info("No milestone data available for analysis.")
+    
+    # Performance score analysis
+    st.subheader("📈 Performance Score Analysis")
+    performance_scores = df[df['performance_score'].notna()]['performance_score']
+    
+    if len(performance_scores) > 0:
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            fig = px.histogram(
+                x=performance_scores,
+                nbins=20,
+                title="Performance Score Distribution",
+                labels={'x': 'Performance Score', 'y': 'Count'}
+            )
+            st.plotly_chart(fig, use_container_width=True, key="performance_score_histogram")
+        
+        with col2:
+            # Performance statistics
+            st.metric("Average Performance Score", f"{performance_scores.mean():.1f}")
+            st.metric("Top Performance Score", f"{performance_scores.max():.1f}")
+            st.metric("High Performers (>15)", len(performance_scores[performance_scores > 15]))
+    else:
+        st.info("No performance score data available for analysis.")
 
 def show_repository_analysis(df):
     """Show repository-specific analysis"""
@@ -390,7 +370,7 @@ def show_repository_analysis(df):
             st.metric("Total Proposals", len(repo_data))
         
         with col2:
-            approved = len(repo_data[repo_data['merged'] == True])
+            approved = len(repo_data[repo_data['category'] == 'APPROVED'])
             st.metric("Approved", approved)
         
         with col3:
@@ -458,7 +438,7 @@ def show_author_analysis(df):
             st.metric("Total Proposals", len(author_data))
         
         with col2:
-            approved = len(author_data[author_data['merged'] == True])
+            approved = len(author_data[author_data['category'] == 'APPROVED'])
             st.metric("Approved", approved)
         
         with col3:
@@ -467,7 +447,7 @@ def show_author_analysis(df):
         
         # Show author's proposals
         st.subheader(f"Proposals by {selected_author}")
-        author_proposals = author_data[['title', 'repository', 'category', 'created_at', 'merged']].copy()
+        author_proposals = author_data[['title', 'repository', 'category', 'created_at']].copy()
         author_proposals['created_at'] = author_proposals['created_at'].dt.strftime('%Y-%m-%d')
         st.dataframe(author_proposals, use_container_width=True)
 
@@ -482,7 +462,7 @@ def show_performance_trends(df):
     
     monthly_stats = df_monthly.groupby('month').agg({
         'id': 'count',
-        'merged': 'sum'
+        'category': lambda x: (x == 'APPROVED').sum()
     }).reset_index()
     monthly_stats.columns = ['Month', 'Total_Proposals', 'Approved_Proposals']
     monthly_stats['Approval_Rate'] = (monthly_stats['Approved_Proposals'] / monthly_stats['Total_Proposals']) * 100
@@ -534,7 +514,7 @@ def show_ai_evaluation(df):
         return
     
     # Proposal selector
-    proposals = df[['title', 'author', 'repository', 'category', 'description']].copy()
+    proposals = df[['title', 'author', 'repository', 'category', 'body']].copy()
     proposals['display_title'] = proposals['title'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
     
     selected_proposal_idx = st.selectbox(
@@ -646,10 +626,9 @@ def show_ai_evaluation(df):
             st.write(f"**Author**: {selected_proposal['author']}")
             st.write(f"**Repository**: {selected_proposal['repository']}")
             st.write(f"**Category**: {selected_proposal['category']}")
-            st.write(f"**Milestones**: {selected_proposal['milestones']}")
-            st.write(f"**Bounty Amount**: ${selected_proposal['bounty_amount']:,.0f}" if selected_proposal['bounty_amount'] else "**Bounty Amount**: Not specified")
+            st.write(f"**Milestone**: {selected_proposal.get('milestone', 'Not specified')}")
             st.write(f"**Description**:")
-            st.text(selected_proposal['description'][:500] + "..." if len(selected_proposal['description']) > 500 else selected_proposal['description'])
+            st.text(selected_proposal['body'][:500] + "..." if len(selected_proposal['body']) > 500 else selected_proposal['body'])
 
 def show_curator_analysis(df):
     """Show curator analysis and performance"""
