@@ -7,7 +7,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-def refresh_data(limit: int = 20):
+def refresh_data():
     print("🔄 Starting data refresh...")
     
     # Initialize components
