@@ -147,8 +147,8 @@ class GitHubClient:
         
         return all_issues
     
-    def fetch_all_grant_proposals(self) -> Dict[str, List[Dict]]:
-        """Fetch grant proposals from all configured repositories"""
+    def fetch_all_grant_proposals(self) -> dict:
+        """Fetch all grant proposals from all repositories"""
         all_proposals = {}
         
         for repo_key, repo_config in GRANT_REPOSITORIES.items():
@@ -160,6 +160,8 @@ class GitHubClient:
                     repo=repo_config['repo']
                 )
                 
+                logger.info(f"Fetched {len(prs)} pull requests from {repo_config['owner']}/{repo_config['repo']}")
+                
                 # Add repository metadata to each PR
                 for pr in prs:
                     pr['repository'] = repo_key
@@ -169,7 +171,7 @@ class GitHubClient:
                 logger.info(f"Enriching {len(prs)} proposals with comments and reviews...")
                 enriched_prs = []
                 for i, pr in enumerate(prs):
-                    if i % 10 == 0:  # Log progress every 10 proposals
+                    if i % 5 == 0:  # Log progress every 5 proposals
                         logger.info(f"Enriching proposal {i+1}/{len(prs)}")
                     enriched_pr = self.enrich_proposal_data(pr)
                     enriched_prs.append(enriched_pr)
@@ -180,7 +182,7 @@ class GitHubClient:
             except Exception as e:
                 logger.error(f"Error fetching from {repo_key}: {e}")
                 all_proposals[repo_key] = []
-        
+            
         return all_proposals
     
     def enrich_proposal_data(self, proposal: Dict) -> Dict:

@@ -7,7 +7,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-def refresh_data():
+def refresh_data(limit: int = 20):
     print("🔄 Starting data refresh...")
     
     # Initialize components
@@ -16,13 +16,13 @@ def refresh_data():
     database = GrantDatabase()
     
     try:
-        # Fetch enriched data from GitHub
+        # Step 1: Fetch data from GitHub
         print("📥 Fetching proposals from GitHub...")
         proposals = github_client.fetch_all_grant_proposals()
         
         # Process the data
         print("🔧 Processing proposals...")
-        df = data_processor.process_all_proposals(proposals)
+        df = data_processor.process_proposals(proposals)
         
         # Save to database
         print("💾 Saving to database...")
@@ -30,7 +30,15 @@ def refresh_data():
         
         # Calculate and save metrics
         print("📊 Calculating metrics...")
-        metrics = data_processor.calculate_performance_metrics(df)
+        summary_stats = data_processor.get_summary_stats(df)
+        program_stats = data_processor.get_program_stats(df)
+        curator_stats = data_processor.get_curator_stats(df)
+        
+        metrics = {
+            'summary_stats': summary_stats,
+            'program_stats': program_stats,
+            'curator_stats': curator_stats
+        }
         database.save_metrics(metrics)
         
         print("✅ Data refresh completed!")

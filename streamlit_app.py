@@ -133,7 +133,7 @@ def main():
                 progress_container.progress(0.25)
                 
                 try:
-                    proposals = components['github_client'].fetch_all_grant_proposals()
+                    proposals = components['github_client'].fetch_all_grant_proposals(limit=20)
                     
                     # Update real-time stats
                     total_proposals = sum(len(props) for props in proposals.values())
@@ -163,8 +163,8 @@ def main():
                 status_container.info("💾 Saving data to storage...")
                 progress_container.progress(0.75)
                 
-                # Save to storage
-                success = components['database'].save_proposals(proposals)
+                # Save to storage - pass the DataFrame directly since it has all calculated fields
+                success = components['database'].save_proposals(df)
                 if success:
                     # Calculate and save metrics
                     summary_stats = components['data_processor'].get_summary_stats(df)

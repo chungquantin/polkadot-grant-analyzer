@@ -16,48 +16,54 @@ class CloudStorage:
         """Get a namespaced storage key"""
         return f"polkadot_analyzer_{key}"
     
-    def save_proposals(self, proposals_data: dict):
+    def save_proposals(self, proposals_data):
         """Save proposals data to session state"""
         try:
             # Convert proposals to a format that can be stored in session state
             processed_data = []
             
-            for repo_key, proposals in proposals_data.items():
-                for proposal in proposals:
-                    try:
-                        processed_proposal = {
-                            'id': proposal.get('id'),
-                            'number': proposal.get('number'),
-                            'title': proposal.get('title', ''),
-                            'body': proposal.get('body', ''),
-                            'state': proposal.get('state', ''),
-                            'created_at': proposal.get('created_at'),
-                            'updated_at': proposal.get('updated_at'),
-                            'closed_at': proposal.get('closed_at'),
-                            'merged_at': proposal.get('merged_at'),
-                            'repository': repo_key,
-                            'author': proposal.get('author', ''),
-                            'author_id': proposal.get('author_id'),
-                            'labels': proposal.get('labels', []),
-                            'milestone': proposal.get('milestone', ''),
-                            'comments_count': proposal.get('comments_count', 0),
-                            'review_comments_count': proposal.get('review_comments_count', 0),
-                            'commits_count': proposal.get('commits_count', 0),
-                            'additions_count': proposal.get('additions_count', 0),
-                            'deletions_count': proposal.get('deletions_count', 0),
-                            'changed_files_count': proposal.get('changed_files_count', 0),
-                            'curators': proposal.get('curators', []),
-                            'comments': proposal.get('comments', []),
-                            'reviews': proposal.get('reviews', []),
-                            'category': proposal.get('category', ''),
-                            'approval_time_days': proposal.get('approval_time_days'),
-                            'performance_score': proposal.get('performance_score', 0.0),
-                            'is_stale': proposal.get('is_stale', False)
-                        }
-                        processed_data.append(processed_proposal)
-                    except Exception as e:
-                        print(f"Error processing proposal {proposal.get('id', 'unknown')}: {e}")
-                        continue
+            # Handle both dict and DataFrame input
+            if isinstance(proposals_data, dict):
+                # Original dict format
+                for repo_key, proposals in proposals_data.items():
+                    for proposal in proposals:
+                        try:
+                            processed_proposal = {
+                                'id': proposal.get('id'),
+                                'number': proposal.get('number'),
+                                'title': proposal.get('title', ''),
+                                'body': proposal.get('body', ''),
+                                'state': proposal.get('state', ''),
+                                'created_at': proposal.get('created_at'),
+                                'updated_at': proposal.get('updated_at'),
+                                'closed_at': proposal.get('closed_at'),
+                                'merged_at': proposal.get('merged_at'),
+                                'repository': repo_key,
+                                'author': proposal.get('author', ''),
+                                'author_id': proposal.get('author_id'),
+                                'labels': proposal.get('labels', []),
+                                'milestone': proposal.get('milestone', ''),
+                                'comments_count': proposal.get('comments_count', 0),
+                                'review_comments_count': proposal.get('review_comments_count', 0),
+                                'commits_count': proposal.get('commits_count', 0),
+                                'additions_count': proposal.get('additions_count', 0),
+                                'deletions_count': proposal.get('deletions_count', 0),
+                                'changed_files_count': proposal.get('changed_files_count', 0),
+                                'curators': proposal.get('curators', []),
+                                'comments': proposal.get('comments', []),
+                                'reviews': proposal.get('reviews', []),
+                                'category': proposal.get('category', 'PENDING'),  # Default to PENDING if not set
+                                'approval_time_days': proposal.get('approval_time_days'),
+                                'performance_score': proposal.get('performance_score', 0.0),
+                                'is_stale': proposal.get('is_stale', False)
+                            }
+                            processed_data.append(processed_proposal)
+                        except Exception as e:
+                            print(f"Error processing proposal {proposal.get('id', 'unknown')}: {e}")
+                            continue
+            else:
+                # DataFrame format - convert to list of dicts
+                processed_data = proposals_data.to_dict('records')
             
             # Store in session state
             storage_key = self._get_storage_key('proposals')

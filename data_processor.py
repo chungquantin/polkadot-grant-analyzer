@@ -49,6 +49,17 @@ class GrantDataProcessor:
     def _process_single_proposal(self, proposal: dict, repo_key: str) -> dict:
         """Process a single proposal"""
         try:
+            # Helper function to safely convert to int
+            def safe_int(value, default=0):
+                if value is None:
+                    return default
+                if isinstance(value, list):
+                    return len(value) if value else default
+                try:
+                    return int(value)
+                except (ValueError, TypeError):
+                    return default
+            
             # Basic proposal info
             processed = {
                 'id': proposal.get('id'),
@@ -64,13 +75,13 @@ class GrantDataProcessor:
                 'author': proposal.get('user', {}).get('login', 'Unknown'),
                 'author_id': proposal.get('user', {}).get('id'),
                 'labels': self._extract_labels(proposal),
-                'milestone': proposal.get('milestone', {}).get('title', ''),
-                'comments_count': proposal.get('comments', 0),
-                'review_comments_count': proposal.get('review_comments', 0),
-                'commits_count': proposal.get('commits', 0),
-                'additions_count': proposal.get('additions', 0),
-                'deletions_count': proposal.get('deletions', 0),
-                'changed_files_count': proposal.get('changed_files', 0),
+                'milestone': proposal.get('milestone', {}).get('title', '') if proposal.get('milestone') and isinstance(proposal.get('milestone'), dict) else '',
+                'comments_count': safe_int(proposal.get('comments', 0)),
+                'review_comments_count': safe_int(proposal.get('review_comments', 0)),
+                'commits_count': safe_int(proposal.get('commits', 0)),
+                'additions_count': safe_int(proposal.get('additions', 0)),
+                'deletions_count': safe_int(proposal.get('deletions', 0)),
+                'changed_files_count': safe_int(proposal.get('changed_files', 0)),
                 'curators': self._extract_curators(proposal),
                 'comments': proposal.get('comments', []),
                 'reviews': proposal.get('reviews', [])
@@ -84,7 +95,9 @@ class GrantDataProcessor:
     def _extract_labels(self, proposal: dict) -> list:
         """Extract labels from proposal"""
         labels = proposal.get('labels', [])
-        return [label.get('name', '') for label in labels if label.get('name')]
+        if not labels:
+            return []
+        return [label.get('name', '') for label in labels if label and isinstance(label, dict) and label.get('name')]
     
     def _extract_curators(self, proposal: dict) -> list:
         """Extract curators from comments and reviews"""
@@ -92,17 +105,21 @@ class GrantDataProcessor:
         
         # Extract from comments
         comments = proposal.get('comments', [])
-        for comment in comments:
-            user = comment.get('user', {})
-            if user and user.get('login'):
-                curators.add(user.get('login'))
+        if comments:
+            for comment in comments:
+                if comment and isinstance(comment, dict):
+                    user = comment.get('user', {})
+                    if user and isinstance(user, dict) and user.get('login'):
+                        curators.add(user.get('login'))
         
         # Extract from reviews
         reviews = proposal.get('reviews', [])
-        for review in reviews:
-            user = review.get('user', {})
-            if user and user.get('login'):
-                curators.add(user.get('login'))
+        if reviews:
+            for review in reviews:
+                if review and isinstance(review, dict):
+                    user = review.get('user', {})
+                    if user and isinstance(user, dict) and user.get('login'):
+                        curators.add(user.get('login'))
         
         return list(curators)
     
@@ -150,7 +167,12 @@ class GrantDataProcessor:
             # Check if stale
             created_at = pd.to_datetime(row.get('created_at'))
             if pd.notna(created_at):
-                days_open = (datetime.now() - created_at).days
+                # Use timezone-aware datetime comparison
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                if created_at.tz is None:
+                    created_at = created_at.tz_localize('UTC')
+                days_open = (now - created_at).days
                 if days_open > 60:
                     return 'STALE'
             return 'PENDING'
@@ -161,20 +183,38 @@ class GrantDataProcessor:
         """Calculate a performance score based on various metrics"""
         score = pd.Series(0.0, index=df.index)
         
+        # Ensure all numeric fields are properly converted
+        def safe_numeric(value, default=0):
+            if pd.isna(value) or value is None:
+                return default
+            if isinstance(value, list):
+                return len(value) if value else default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return default
+        
+        # Convert numeric fields safely
+        comments_count = df['comments_count'].apply(lambda x: safe_numeric(x, 0))
+        review_comments_count = df['review_comments_count'].apply(lambda x: safe_numeric(x, 0))
+        commits_count = df['commits_count'].apply(lambda x: safe_numeric(x, 0))
+        additions_count = df['additions_count'].apply(lambda x: safe_numeric(x, 0))
+        deletions_count = df['deletions_count'].apply(lambda x: safe_numeric(x, 0))
+        approval_time = df['approval_time_days'].apply(lambda x: safe_numeric(x, 0))
+        
         # Base score for approved proposals
         score += (df['category'] == 'APPROVED').astype(int) * 10
         
         # Bonus for quick approval
-        approval_time = df['approval_time_days']
         score += ((approval_time < 30) & (approval_time > 0)).astype(int) * 5
         
         # Bonus for engagement (comments, reviews)
-        score += np.minimum(df['comments_count'] / 10, 5)
-        score += np.minimum(df['review_comments_count'] / 5, 5)
+        score += np.minimum(comments_count / 10, 5)
+        score += np.minimum(review_comments_count / 5, 5)
         
         # Bonus for activity (commits, changes)
-        score += np.minimum(df['commits_count'] / 5, 5)
-        score += np.minimum((df['additions_count'] + df['deletions_count']) / 100, 5)
+        score += np.minimum(commits_count / 5, 5)
+        score += np.minimum((additions_count + deletions_count) / 100, 5)
         
         return score
     
@@ -186,7 +226,12 @@ class GrantDataProcessor:
             
             created_at = pd.to_datetime(row.get('created_at'))
             if pd.notna(created_at):
-                days_open = (datetime.now() - created_at).days
+                # Use timezone-aware datetime comparison
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                if created_at.tz is None:
+                    created_at = created_at.tz_localize('UTC')
+                days_open = (now - created_at).days
                 return days_open > 60
             return False
         
