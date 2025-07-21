@@ -133,7 +133,7 @@ def main():
                 progress_container.progress(0.25)
                 
                 try:
-                    proposals = components['github_client'].fetch_all_grant_proposals(limit=20)
+                    proposals = components['github_client'].fetch_all_grant_proposals()
                     
                     # Update real-time stats
                     total_proposals = sum(len(props) for props in proposals.values())
