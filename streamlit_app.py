@@ -60,11 +60,23 @@ st.set_page_config(
 # Initialize components
 @st.cache_resource
 def init_components():
+    """Initialize all components with caching"""
+    # Initialize components
+    github_client = GitHubClient()
+    data_processor = GrantDataProcessor()
+    
+    # Force SQLite usage for better data persistence
+    database = GrantDatabase()
+    database.cloud_storage = None  # Force SQLite usage
+    
+    # Initialize AI evaluator
+    ai_evaluator = AIEvaluator()
+    
     return {
-        'github_client': GitHubClient(),
-        'data_processor': GrantDataProcessor(),
-        'database': GrantDatabase(),
-        'ai_evaluator': AIEvaluator()
+        'github_client': github_client,
+        'data_processor': data_processor,
+        'database': database,
+        'ai_evaluator': ai_evaluator
     }
 
 components = init_components()
@@ -513,15 +525,15 @@ def show_overview_charts(df, metrics):
     else:
         st.info("No approval time data available for analysis.")
     
-    # Milestone analysis (using milestone column)
+    # Milestone analysis (using milestones column)
     st.subheader("📊 Milestone Analysis")
-    milestone_data = df[df['milestone'].notna() & (df['milestone'] != '')]
+    milestone_data = df[df['milestones'].notna() & (df['milestones'] != '')]
     
     if len(milestone_data) > 0:
         col1, col2 = st.columns(2)
         
         with col1:
-            milestone_counts = milestone_data['milestone'].value_counts().head(10)
+            milestone_counts = milestone_data['milestones'].value_counts().head(10)
             fig = px.bar(
                 x=milestone_counts.values,
                 y=milestone_counts.index,
@@ -533,34 +545,37 @@ def show_overview_charts(df, metrics):
         with col2:
             # Milestone statistics
             st.metric("Proposals with Milestones", len(milestone_data))
-            st.metric("Unique Milestones", milestone_data['milestone'].nunique())
+            st.metric("Unique Milestones", milestone_data['milestones'].nunique())
             st.metric("Milestone Coverage", f"{(len(milestone_data) / len(df) * 100):.1f}%")
     else:
         st.info("No milestone data available for analysis.")
     
     # Performance score analysis
     st.subheader("📈 Performance Score Analysis")
-    performance_scores = df[df['performance_score'].notna()]['performance_score']
-    
-    if len(performance_scores) > 0:
-        col1, col2 = st.columns(2)
+    if 'performance_score' in df.columns:
+        performance_scores = df[df['performance_score'].notna()]['performance_score']
         
-        with col1:
-            fig = px.histogram(
-                x=performance_scores,
-                nbins=20,
-                title="Performance Score Distribution",
-                labels={'x': 'Performance Score', 'y': 'Count'}
-            )
-            st.plotly_chart(fig, use_container_width=True, key="performance_score_histogram")
-        
-        with col2:
-            # Performance statistics
-            st.metric("Average Performance Score", f"{performance_scores.mean():.1f}")
-            st.metric("Top Performance Score", f"{performance_scores.max():.1f}")
-            st.metric("High Performers (>15)", len(performance_scores[performance_scores > 15]))
+        if len(performance_scores) > 0:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                fig = px.histogram(
+                    x=performance_scores,
+                    nbins=20,
+                    title="Performance Score Distribution",
+                    labels={'x': 'Performance Score', 'y': 'Count'}
+                )
+                st.plotly_chart(fig, use_container_width=True, key="performance_score_histogram")
+            
+            with col2:
+                # Performance statistics
+                st.metric("Average Performance Score", f"{performance_scores.mean():.1f}")
+                st.metric("Top Performance Score", f"{performance_scores.max():.1f}")
+                st.metric("High Performers (>15)", len(performance_scores[performance_scores > 15]))
+        else:
+            st.info("No performance score data available for analysis.")
     else:
-        st.info("No performance score data available for analysis.")
+        st.info("Performance score data not available. Please refresh the data to calculate performance scores.")
 
 def show_repository_analysis(df):
     """Show repository-specific analysis"""
@@ -724,7 +739,7 @@ def show_ai_evaluation(df):
         return
     
     # Proposal selector
-    proposals = df[['title', 'author', 'repository', 'category', 'body']].copy()
+    proposals = df[['title', 'author', 'repository', 'category', 'description']].copy()
     proposals['display_title'] = proposals['title'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
     
     selected_proposal_idx = st.selectbox(
@@ -836,9 +851,9 @@ def show_ai_evaluation(df):
             st.write(f"**Author**: {selected_proposal['author']}")
             st.write(f"**Repository**: {selected_proposal['repository']}")
             st.write(f"**Category**: {selected_proposal['category']}")
-            st.write(f"**Milestone**: {selected_proposal.get('milestone', 'Not specified')}")
+            st.write(f"**Milestones**: {selected_proposal.get('milestones', 'Not specified')}")
             st.write(f"**Description**:")
-            st.text(selected_proposal['body'][:500] + "..." if len(selected_proposal['body']) > 500 else selected_proposal['body'])
+            st.text(selected_proposal['description'][:500] + "..." if len(selected_proposal['description']) > 500 else selected_proposal['description'])
 
 def show_curator_analysis(df):
     """Show curator analysis and performance"""
@@ -1112,7 +1127,7 @@ def show_ai_milestone_analysis(df):
         return
     
     # Proposal selector
-    proposals = df[['title', 'author', 'repository', 'body']].copy()
+    proposals = df[['title', 'author', 'repository', 'description']].copy()
     proposals['display_title'] = proposals['title'].apply(lambda x: x[:50] + "..." if len(x) > 50 else x)
     
     selected_proposal_idx = st.selectbox(
@@ -1158,8 +1173,8 @@ def show_ai_milestone_analysis(df):
         # Detailed milestone analysis
         st.subheader("📋 Detailed Milestone Analysis")
         
-        # Extract milestone information from body
-        body = selected_proposal.get('body', '')
+        # Extract milestone information from description
+        body = selected_proposal.get('description', '')
         milestones_found = []
         
         # Look for milestone patterns
@@ -1210,7 +1225,7 @@ def show_ai_milestone_analysis(df):
             st.write("• Include specific deliverables for each milestone")
             st.write("• Provide realistic time estimates")
         
-        # Show original body
+        # Show original description
         with st.expander("📄 Original Proposal Description"):
             st.text(body)
 

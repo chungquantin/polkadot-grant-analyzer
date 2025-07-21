@@ -23,8 +23,22 @@ class GrantDatabase:
         self.db_path = db_path or DATABASE_PATH
         self.cloud_storage = None
         
-        # Initialize cloud storage if available
-        if CLOUD_STORAGE_AVAILABLE:
+        # Check if we're running in Streamlit context
+        in_streamlit = False
+        try:
+            import streamlit as st
+            # Try to access session_state to see if we're in Streamlit
+            try:
+                _ = st.session_state
+                in_streamlit = True
+            except:
+                in_streamlit = False
+        except ImportError:
+            # Streamlit not available
+            in_streamlit = False
+        
+        # Initialize cloud storage only if we're in Streamlit
+        if CLOUD_STORAGE_AVAILABLE and in_streamlit:
             try:
                 self.cloud_storage = CloudStorage()
             except Exception as e:
